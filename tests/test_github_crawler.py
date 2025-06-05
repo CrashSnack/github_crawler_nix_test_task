@@ -11,6 +11,8 @@ import pytest
 from typing import List
 import json
 from io import StringIO
+import requests
+from unittest.mock import MagicMock
 
 
 def get_test_html_code(empty_html: bool = False) -> str:
@@ -44,7 +46,11 @@ def get_urls_list(empty_urls: bool = False) -> str:
     return json_string
 
 
+# Test cases for GitHub_Crawler class
 class Test_GitHub_Crawler(GitHub_Crawler):
+    @pytest.mark.skip(
+        "Skipping make_request test as it requires network access and there is nothing to test except that."
+    )
     def test_make_request(
         self,
         url="https://google.com/",
@@ -59,13 +65,14 @@ class Test_GitHub_Crawler(GitHub_Crawler):
         :param headers: the headers to include in the request.
         :param proxy: the proxy to use for the request.
         :param timeout: timeout for the request in seconds.
-        :return: None
+        :return: the response content as a string.
         :raise: an exception if the request fails.
         """
         try:
-            super().make_request(url, headers, proxy, timeout)
+            return super().make_request(url, headers, proxy, timeout)
         except Exception as e:
-            pass
+            raise e
+
 
     @pytest.mark.parametrize(
         "expected_list",
@@ -91,6 +98,7 @@ class Test_GitHub_Crawler(GitHub_Crawler):
         assert (
             json.dumps(url_list) == expected_list
         ), f"Expected {expected_list}, but got {url_list}"
+
 
     @pytest.mark.parametrize(
         "keywords_param, type_param, proxies_param, expect_empty_results",
@@ -242,6 +250,7 @@ class Test_GitHub_Crawler(GitHub_Crawler):
         monkeypatch.setattr(ProxyRotator, "__init__", original_proxy_rotator_init)
 
 
+# Test cases for ProxyRotator class
 @pytest.mark.parametrize(
     "proxies", [(["1.1.1.1:8080"]), (["http://1.1.1.1:8080"]), ([])]
 )
@@ -258,6 +267,11 @@ def test_proxy_rotator_get_proxy(proxies: List[str]):
 
 
 def test_proxy_rotator_queue_refill():
+    """
+    Test the queue refill functionality of the ProxyRotator class.
+
+    :raise: an assertion error if the queue is not refilled correctly.
+    """
     proxies = ["http://1.1.1.1:8080", "http://2.2.2.2:8080"]
     rotator = ProxyRotator(proxies)
 
@@ -268,30 +282,57 @@ def test_proxy_rotator_queue_refill():
     assert proxy in proxies, f"Expected proxy from list, got: {proxy}"
 
 
-@pytest.mark.parametrize(
-    "proxies", [(["1.1.1.1:8080"]), (["http://1.1.1.1:8080"]), ([])]
-)
-def test_proxy_rotator_initialization(proxies: List[str]):
+def test_proxy_rotator_get_proxy_list_retries_and_status_error(monkeypatch):
     """
-    Test the initialization of the ProxyRotator class which also test ProxyRotator.get_proxy_list() method when proxies is None.
+    Test the get_proxy_list method of the ProxyRotator class when it encounters a non-200 status code and retries.
 
-    :raise: an assertion error if the initialization fails.
+    :param monkeypatch: pytest fixture to mock methods.
+    :raise: an assertion error if the method does not handle retries correctly or if the proxies list is not empty after retries.
     """
-    try:
-        rotator = ProxyRotator(proxies)
-        assert rotator is not None
-    except Exception as e:
-        pytest.fail(f"ProxyRotator initialization failed: {e}")
+    mock_responses_list = [
+        MagicMock(status_code=500, text="Server Error"),  # First call: non-200 status
+        MagicMock(
+            status_code=200,
+            text='<html><body><table class="table table-striped table-bordered"><tr><td>1.2.3.4</td><td>8080</td><td>US</td><td>elite proxy</td><td>yes</td></tr></table></body></html>',
+        ),  # Second call: success
+    ]
+
+    mock_requests_get = MagicMock(
+        side_effect=lambda *args, **kwargs: mock_responses_list.pop(0)
+    )
+    monkeypatch.setattr(requests, "get", mock_requests_get)
+
+    captured_output = StringIO()
+    original_stdout = sys.stdout
+    sys.stdout = captured_output
+
+    # Initialize ProxyRotator with proxies=None to trigger get_proxy_list
+    rotator = ProxyRotator(proxies=None, get_proxies_retries=2)
+
+    sys.stdout = original_stdout
+    output = captured_output.getvalue()
+
+    assert (
+        "Failed to get proxies list from https://free-proxy-list.net/. Status code: 500"
+        in output
+    )
+    assert "Retrying to get proxies list... (1/2)" in output
+    assert rotator.proxies == []
+    assert mock_requests_get.call_count == 2
 
 
-def test_github_crawler_initialization():
+def test_proxy_rotator_get_proxy_list_request_exception(monkeypatch):
     """
-    Test the initialization of the GitHub_Crawler class.
+    Test the get_proxy_list method of the ProxyRotator class when it raises a RequestException.
 
-    :raise: an assertion error if the initialization fails.
+    :param monkeypatch: pytest fixture to mock methods.
+    :raise: an exception if the method does not handle the RequestException correctly.
     """
-    try:
-        crawler = GitHub_Crawler()
-        assert crawler is not None
-    except Exception as e:
-        pytest.fail(f"GitHub_Crawler initialization failed: {e}")
+
+    def mock_get_raises_exception(url):
+        raise requests.RequestException("Network down")
+
+    monkeypatch.setattr(requests, "get", mock_get_raises_exception)
+
+    with pytest.raises(Exception, match="Couldn't get proxies list."):
+        ProxyRotator(proxies=None, get_proxies_retries=1)
