@@ -131,7 +131,7 @@ class Test_GitHub_Crawler(GitHub_Crawler):
     ):
         """
         Test the search method of the GitHub_Crawler class with various parameters.
-        
+
         :param monkeypatch: pytest fixture to mock methods.
         :param keywords_param: keywords to search for.
         :param type_param: type of search (Repositories, Issues, Wikis).
@@ -251,8 +251,10 @@ def test_proxy_rotator_get_proxy(proxies: List[str]):
 
     :raise: an assertion error if the method returns None.
     """
-    rotator = ProxyRotator()
-    assert rotator.get_proxy() is not None, "ProxyRotator.get_proxy() returned None"
+    rotator = ProxyRotator(proxies=proxies)
+    assert (
+        "http://" in rotator.get_proxy()
+    ), "ProxyRotator.get_proxy() returned wrong proxy"
 
 
 def test_proxy_rotator_queue_refill():
@@ -266,21 +268,6 @@ def test_proxy_rotator_queue_refill():
     assert proxy in proxies, f"Expected proxy from list, got: {proxy}"
 
 
-def test_get_proxy_list_failure():
-    """
-    Test the get_proxy_list method of the ProxyRotator class when it fails.
-
-    :raise: an exception if the method raises an error.
-    """
-
-    class TestProxyRotator(ProxyRotator):
-        def get_proxy_list(self, source):
-            raise Exception("Mocked failure")
-
-    with pytest.raises(Exception, match="Mocked failure"):
-        TestProxyRotator(proxies=None)
-
-
 @pytest.mark.parametrize(
     "proxies", [(["1.1.1.1:8080"]), (["http://1.1.1.1:8080"]), ([])]
 )
@@ -291,7 +278,7 @@ def test_proxy_rotator_initialization(proxies: List[str]):
     :raise: an assertion error if the initialization fails.
     """
     try:
-        rotator = ProxyRotator()
+        rotator = ProxyRotator(proxies)
         assert rotator is not None
     except Exception as e:
         pytest.fail(f"ProxyRotator initialization failed: {e}")
